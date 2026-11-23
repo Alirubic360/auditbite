@@ -55,3 +55,34 @@ class LocalStorage:
 
 def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+class SupabaseStorage:
+    """Supabase Storage over its REST API (private bucket; service key stays server-side).
+    Files are only ever reached through short-lived signed URLs."""
+    def __init__(self, url: str, service_key: str, bucket: str = "auditbite", client=None):
+        import httpx
+        self.base = url.rstrip("/") + "/storage/v1"
+        self.bucket = bucket
+        self.http = client or httpx.Client(timeout=60)
+        self.h = {"Authorization": f"Bearer {service_key}", "apikey": service_key}
+
+    def _obj(self, path: str) -> str:
+        from urllib.parse import quote
+        return f"{self.base}/object/{self.bucket}/{quote(path, safe='/')}"
+
+    def put(self, path, data):
+        mt = sniff_media_type(data) or "application/octet-stream"
+        r = self.http.post(self._obj(path), content=data, headers={**self.h, "Content-Type": mt, "x-upsert": "true"})
+        r.raise_for_status()
+
+    def get(self, path):
+        r = self.http.get(self._obj(path), headers=self.h)
+        r.raise_for_status()
+        return r.content
+
+    def signed_url(self, path, ttl=300):
+        from urllib.parse import quote
+        r = self.http.post(f"{self.base}/object/sign/{self.bucket}/{quote(path, safe='/')}", json={"expiresIn": ttl}, headers=self.h)
+        r.raise_for_status()
+        return self.base + r.json()["signedURL"] if r.json()["signedURL"].startswith("/") else r.json()["signedURL"]

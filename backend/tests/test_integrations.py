@@ -82,3 +82,34 @@ def test_worker_without_ai_key_leaves_invoices_queued_but_still_runs_followups(d
         org, _ = make_org(c); iid = upload(c, storage, org, "x"); c.commit()
         assert worker.tick(c, storage, None, OutboxSender()) == {"processed": 0, "followups": 0}
         assert c.execute("select status, attempts from invoices where id=%s", (iid,)).fetchone() == {"status": "uploaded", "attempts": 0}
+
+
+def test_supabase_storage_request_shapes():
+    seen = []
+    def handler(req):
+        seen.append(req)
+        if req.method == "POST" and "/object/sign/" in str(req.url):
+            return httpx.Response(200, json={"signedURL": "/object/sign/auditbite/org/a%20b.pdf?token=T"})
+        if req.method == "GET":
+            return httpx.Response(200, content=b"%PDF-data")
+        return httpx.Response(200, json={"Key": "ok"})
+    from auditbite.storage import SupabaseStorage
+    s = SupabaseStorage("https://p.supabase.co/", "svc", "auditbite", httpx.Client(transport=httpx.MockTransport(handler)))
+    s.put("org/inv 1", b"%PDF-1.4 x")
+    assert str(seen[0].url) == "https://p.supabase.co/storage/v1/object/auditbite/org/inv%201" and seen[0].headers["authorization"] == "Bearer svc"
+    assert seen[0].headers["content-type"] == "application/pdf" and seen[0].headers["x-upsert"] == "true"
+    assert s.get("org/inv 1") == b"%PDF-data"
+    assert s.signed_url("org/a b.pdf", 120) == "https://p.supabase.co/storage/v1/object/sign/auditbite/org/a%20b.pdf?token=T"
+    assert json.loads(seen[-1].content) == {"expiresIn": 120}
+    bad = SupabaseStorage("https://p.supabase.co", "svc", client=httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(404))))
+    with pytest.raises(httpx.HTTPStatusError):
+        bad.get("missing")
+
+
+def test_production_refuses_default_signing_secret(monkeypatch):
+    from auditbite import worker
+    for k in ("SUPABASE_URL", "SUPABASE_SERVICE_KEY", "FILE_SIGN_SECRET"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("AUDITBITE_ENV", "production")
+    with pytest.raises(RuntimeError, match="FILE_SIGN_SECRET"):
+        worker.build_deps()

@@ -5,11 +5,17 @@ from . import claims, pipeline
 from .ai import AnthropicAI
 from .db import service_conn
 from .mailer import OutboxSender, ResendSender
-from .storage import LocalStorage
+from .storage import LocalStorage, SupabaseStorage
 
 
 def build_deps():
-    storage = LocalStorage(os.environ.get("STORAGE_DIR", "./storage"), os.environ.get("FILE_SIGN_SECRET", "dev-only-change-me"))
+    if os.environ.get("SUPABASE_URL") and os.environ.get("SUPABASE_SERVICE_KEY"):
+        storage = SupabaseStorage(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_KEY"], os.environ.get("SUPABASE_BUCKET", "auditbite"))
+    else:
+        secret = os.environ.get("FILE_SIGN_SECRET")
+        if not secret and os.environ.get("AUDITBITE_ENV") == "production":
+            raise RuntimeError("FILE_SIGN_SECRET is required in production (or configure Supabase Storage)")
+        storage = LocalStorage(os.environ.get("STORAGE_DIR", "./storage"), secret or "dev-only-change-me")
     ai = AnthropicAI() if os.environ.get("ANTHROPIC_API_KEY") else None
     sender = ResendSender() if os.environ.get("RESEND_API_KEY") else OutboxSender()
     return storage, ai, sender

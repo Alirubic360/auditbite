@@ -299,6 +299,8 @@ def create_app(deps: Deps) -> FastAPI:
 
     @app.get("/files/{path:path}")
     def get_file(path: str, exp: int, sig: str):
+        if not hasattr(deps.storage, "verify"):
+            raise HTTPException(404, "not found")      # Supabase Storage serves its own signed URLs
         if not deps.storage.verify(path, exp, sig):
             raise HTTPException(403, "link expired or invalid")
         data = deps.storage.get(path)

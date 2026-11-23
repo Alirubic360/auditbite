@@ -14,10 +14,12 @@ db/migrations/0002_platform_admin.sql  platform_admins table (operator access)
 db/migrations/0001_schema.sql   tables, composite tenant FKs, RLS, find_duplicate_invoices()
 db/test/auth_shim.sql           local stand-in for Supabase auth.uid()/roles (tests only)
 backend/src/auditbite/          money, detection, matching, extraction, ai, pipeline, claims, contracts, metrics, evaluation, api, worker
-backend/tests/                  62 tests (unit, real-Postgres RLS, pipeline, claims, API, adapters, eval maths)
+backend/tests/                  64 tests (unit, real-Postgres RLS, pipeline, claims, API, adapters, eval maths)
 frontend/                       Next.js 15 + TypeScript + Tailwind: customer app (English only): dashboard, invoices(+[id]), review, contracts, claims(+[id]), settings; `/admin` = Persian RTL platform-admin console
 e2e/run.js                      Playwright run against the live stack (29 checks)
 ```
+
+See **DEPLOY.md** for production (Supabase + Vercel + Fly.io).
 
 ## Run locally
 ```bash
@@ -53,7 +55,7 @@ Quality eval before each customer / prompt change: `python -m auditbite.evaluati
 | 3.4 triage prompt | only for `unit_mismatch`/`substitution`, advisory (never auto-approves) | per spec: gray cases only |
 | 3.6 claim letter via AI | deterministic verified English template; AI letter only for other languages and rejected if it contains any figure not in the input | "use only numbers supplied" is enforced, not hoped for |
 | 3.7 follow-ups via AI | deterministic templates (<90 words, no legal threats) | fewer failure modes |
-| Supabase Storage | local-disk storage behind a `Storage` protocol, HMAC-signed expiring URLs | adapter for Supabase Storage is the remaining integration |
+| Supabase Storage | `SupabaseStorage` adapter (signed URLs) when `SUPABASE_URL`/`SUPABASE_SERVICE_KEY` are set; local disk + HMAC URLs otherwise | dev works offline; production is stateless. Adapter verified against a mock transport only |
 | shadcn/ui | hand-written Tailwind components | no generator step needed; same look |
 
 ## Known limits
