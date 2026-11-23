@@ -6,7 +6,7 @@ Environment: Postgres 16 (local), Python 3.13, Node 22, headless Chromium. **No 
 | Check | Result |
 |---|---|
 | Schema applies on Postgres 16 | pass |
-| `pytest` (60 tests; fresh DB per test) | **64 passed** |
+| `pytest` (60 tests; fresh DB per test) | **68 passed** |
 | Tenant isolation as the real `authenticated` role on all 14 tables: no cross-org SELECT; cross-org INSERT blocked; UPDATE/DELETE affect 0 rows; cross-tenant FK blocked; `anon` has no access; audit log/membership not writable | pass |
 | Detection maths (Decimal; tolerance boundary; under-billing never claimed; formula prices skipped; 2-cent math tolerance; surcharge caps) | pass |
 | Pipeline: exact SKU / trigram / AI band / hallucinated AI id rejected / duplicates (number and total+date, 90-day limit) / low confidence → review / unknown vendor / expired contract / failure handling / idempotent reprocess | pass |
@@ -27,3 +27,6 @@ Bugs found and fixed *by this verification*: AI-letter fallback left the claim l
 
 ## Addendum: repository move
 The first commits were made inside another repo whose `.gitignore` (`*.sql`) silently dropped `db/` (schema + migrations). Fixed in the standalone repo; tests (64) re-run from the standalone checkout and pass.
+
+## Addendum: JWT algorithms
+API verifies HS256 (shared secret) and ES256/RS256 (Supabase JWKS; issuer + audience enforced; `alg: none` rejected). Tested with a locally generated EC key and a stubbed JWKS client; **not** tested against a live Supabase JWKS endpoint.

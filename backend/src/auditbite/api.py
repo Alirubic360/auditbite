@@ -79,19 +79,41 @@ class SettingsIn(BaseModel):
     default_tolerance_pct: Decimal | None = Field(default=None, ge=0, le=100)
 
 
+_JWKS: dict = {}
+
+
+def jwks_client(base: str):
+    if base not in _JWKS:
+        _JWKS[base] = jwt.PyJWKClient(f"{base}/auth/v1/.well-known/jwks.json", cache_keys=True, lifespan=3600)
+    return _JWKS[base]
+
+
 def create_app(deps: Deps) -> FastAPI:
     app = FastAPI(title="AuditBite API", default_response_class=JSON)
     app.add_middleware(CORSMiddleware, allow_origins=os.environ.get("ALLOWED_ORIGINS", "http://localhost:3000").split(","),
                        allow_methods=["*"], allow_headers=["*"])
 
+    def verify_token(token: str) -> dict:
+        """Supabase signs with either the legacy shared secret (HS256) or asymmetric keys (ES256/RS256, JWKS).
+        The algorithm is taken from an allow-list, never trusted from the token blindly."""
+        alg = jwt.get_unverified_header(token).get("alg")
+        if alg == "HS256":
+            return jwt.decode(token, os.environ["SUPABASE_JWT_SECRET"], algorithms=["HS256"], audience="authenticated")
+        if alg in ("ES256", "RS256"):
+            base = os.environ.get("SUPABASE_URL", "").rstrip("/")
+            if not base:
+                raise jwt.PyJWTError("SUPABASE_URL not configured for asymmetric tokens")
+            key = jwks_client(base).get_signing_key_from_jwt(token).key
+            return jwt.decode(token, key, algorithms=[alg], audience="authenticated", issuer=f"{base}/auth/v1")
+        raise jwt.PyJWTError(f"unsupported alg {alg}")
+
     def uid(authorization: str = Header(default="")) -> str:
         if not authorization.lower().startswith("bearer "):
             raise HTTPException(401, "missing bearer token")
         try:
-            claims = jwt.decode(authorization[7:], os.environ["SUPABASE_JWT_SECRET"], algorithms=["HS256"], audience="authenticated")
-        except jwt.PyJWTError:
+            return verify_token(authorization[7:])["sub"]
+        except (jwt.PyJWTError, KeyError):
             raise HTTPException(401, "invalid token") from None
-        return claims["sub"]
 
     def org_of(c) -> str:
         r = c.execute("select org_id from org_members limit 1").fetchone()   # RLS: only my memberships

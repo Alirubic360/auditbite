@@ -6,7 +6,7 @@ Stack: **Supabase** (Postgres, Auth, Storage) · **Vercel** (Next.js) · **Fly.i
 1. Create a project. Storage → create a **private** bucket named `auditbite`.
 2. Apply migrations with the **direct** connection string (not the pooler):
    `DATABASE_URL=... scripts/migrate.sh`  (do not run `db/test/auth_shim.sql`; Supabase has real `auth`).
-3. Auth → enable email/password. Copy: project URL, anon key, service-role key, JWT secret (Settings → API).
+3. Auth → enable email/password. Copy: project URL, anon key, service-role key. Tokens: the API accepts both legacy HS256 (set `SUPABASE_JWT_SECRET`) and the newer asymmetric ES256/RS256 signing keys (verified via `SUPABASE_URL`'s JWKS). Set both; whichever your project uses will work.
 4. Make yourself platform admin (after signing up once in the app):
    `insert into platform_admins (user_id) values ('<your auth.users id>');`
 

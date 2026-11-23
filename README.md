@@ -14,7 +14,7 @@ db/migrations/0002_platform_admin.sql  platform_admins table (operator access)
 db/migrations/0001_schema.sql   tables, composite tenant FKs, RLS, find_duplicate_invoices()
 db/test/auth_shim.sql           local stand-in for Supabase auth.uid()/roles (tests only)
 backend/src/auditbite/          money, detection, matching, extraction, ai, pipeline, claims, contracts, metrics, evaluation, api, worker
-backend/tests/                  64 tests (unit, real-Postgres RLS, pipeline, claims, API, adapters, eval maths)
+backend/tests/                  68 tests (unit, real-Postgres RLS, pipeline, claims, API, adapters, eval maths)
 frontend/                       Next.js 15 + TypeScript + Tailwind: customer app (English only): dashboard, invoices(+[id]), review, contracts, claims(+[id]), settings; `/admin` = Persian RTL platform-admin console
 e2e/run.js                      Playwright run against the live stack (29 checks)
 ```
