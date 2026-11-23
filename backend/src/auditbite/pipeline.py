@@ -97,12 +97,19 @@ def process_invoice(conn, storage, extractor, matcher, classifier, invoice_id) -
                                                ln["line_no"], confidence=m.confidence * ln["confidence"], needs_ai_triage=True), None))
             continue
         um = detection.detect_unit_mismatch(ln, item)
+        eff = ln
         if um:
-            findings.append((um, m.note))
-            continue
-        pv = detection.detect_price_variance(ln, item)
+            eff = detection.convert_line(ln, item)
+            if eff is None:
+                findings.append((um, m.note))
+                continue
+        pv = detection.detect_price_variance(eff, item)
+        if pv and eff is not ln:
+            pv.evidence += " [" + eff["converted_note"] + "]"
+            pv.confidence = Decimal("0.7")     # conversion-based findings always go through the review queue (<0.8)
         if pv:
-            pv.confidence = (m.confidence * ln["confidence"]).quantize(Decimal("0.001"))
+            if eff is ln:
+                pv.confidence = (m.confidence * ln["confidence"]).quantize(Decimal("0.001"))
             findings.append((pv, m.note))
     # surcharge caps: use the contract that owns matched items (or the only valid contract)
     owner = None

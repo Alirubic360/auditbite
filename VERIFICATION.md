@@ -6,7 +6,7 @@ Environment: Postgres 16 (local), Python 3.13, Node 22, headless Chromium. **No 
 | Check | Result |
 |---|---|
 | Schema applies on Postgres 16 | pass |
-| `pytest` (60 tests; fresh DB per test) | **68 passed** |
+| `pytest` (60 tests; fresh DB per test) | **70 passed** |
 | Tenant isolation as the real `authenticated` role on all 14 tables: no cross-org SELECT; cross-org INSERT blocked; UPDATE/DELETE affect 0 rows; cross-tenant FK blocked; `anon` has no access; audit log/membership not writable | pass |
 | Detection maths (Decimal; tolerance boundary; under-billing never claimed; formula prices skipped; 2-cent math tolerance; surcharge caps) | pass |
 | Pipeline: exact SKU / trigram / AI band / hallucinated AI id rejected / duplicates (number and total+date, 90-day limit) / low confidence → review / unknown vendor / expired contract / failure handling / idempotent reprocess | pass |
@@ -30,3 +30,6 @@ The first commits were made inside another repo whose `.gitignore` (`*.sql`) sil
 
 ## Addendum: JWT algorithms
 API verifies HS256 (shared secret) and ES256/RS256 (Supabase JWKS; issuer + audience enforced; `alg: none` rejected). Tested with a locally generated EC key and a stubbed JWKS client; **not** tested against a live Supabase JWKS endpoint.
+
+## Addendum: unit conversion
+CS->LB conversion added (strict pack-text parse; converted findings forced into review). Covered by unit and pipeline tests (exact Decimal amounts incl. non-terminating division; ambiguous packs stay flagged). Not validated on real invoices.

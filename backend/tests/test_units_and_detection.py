@@ -94,3 +94,16 @@ def test_contract_draft_formula_price():
     d = contracts.draft_from_extraction({"items": [{"canonical_name": "Beef", "unit": "LB", "contract_price": None, "needs_index": False,
                                                     "source_clause": "USDA + 8%"}], "surcharge_caps": [{"line_type": "freight", "cap_pct": 3, "source_clause": "x"}], "warnings": []})
     assert d["items"][0]["needs_index"] is True and d["rebate_rules"][0]["type"] == "surcharge_cap"
+
+
+def test_pack_factor_and_convert_line():
+    from auditbite.units import pack_factor
+    assert pack_factor("4/5 LB", "LB") == Dc(20) and pack_factor("4/5LBS", "lb") == Dc(20) and pack_factor("2/12.5 KG", "KG") == Dc(25)
+    for bad in ("6/#10", "4/5 KG", "case of 20", None, "", "0/5 LB", "4/5 LB extra"):
+        assert pack_factor(bad, "LB") is None
+    item = {"unit": "LB", "contract_price": Dc("2.00"), "tolerance_pct": Dc("0.5"), "needs_index": False}
+    c = dt.convert_line(ln(1, "x", 2, "CS", 80, 160, pack="4/5 LB"), item)
+    assert c["unit"] == "LB" and c["qty"] == Dc(40) and c["unit_price"] == Dc(4)
+    assert dt.convert_line(ln(1, "x", 2, "CS", 80, 160, pack="n/a"), item) is None
+    f = dt.detect_price_variance(dt.convert_line(ln(1, "x", 3, "CS", 79, 237, pack="3/10 LB"), {**item, "contract_price": Dc("2.50")}), {**item, "contract_price": Dc("2.50")})
+    assert f.amount == Dc("12.00")       # 90 LB at 79/30 = 2.6333.. vs 2.50: exact despite the non-terminating division

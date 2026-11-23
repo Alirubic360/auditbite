@@ -14,7 +14,7 @@ db/migrations/0002_platform_admin.sql  platform_admins table (operator access)
 db/migrations/0001_schema.sql   tables, composite tenant FKs, RLS, find_duplicate_invoices()
 db/test/auth_shim.sql           local stand-in for Supabase auth.uid()/roles (tests only)
 backend/src/auditbite/          money, detection, matching, extraction, ai, pipeline, claims, contracts, metrics, evaluation, api, worker
-backend/tests/                  68 tests (unit, real-Postgres RLS, pipeline, claims, API, adapters, eval maths)
+backend/tests/                  70 tests (unit, real-Postgres RLS, pipeline, claims, API, adapters, eval maths)
 frontend/                       Next.js 15 + TypeScript + Tailwind: customer app (English only): dashboard, invoices(+[id]), review, contracts, claims(+[id]), settings; `/admin` = Persian RTL platform-admin console
 e2e/run.js                      Playwright run against the live stack (29 checks)
 ```
@@ -60,7 +60,7 @@ Quality eval before each customer / prompt change: `python -m auditbite.evaluati
 
 ## Known limits
 * Heavily abbreviated invoice text (e.g. `CKN BRST BNLS 40#`) scores < 0.4 trigram similarity and is **not** sent to AI (spec §3.3 band). Fix = add `aliases` on contract items; this is a recall limit, never a false-claim risk.
-* Unit conversions (CS ↔ LB) are flagged `unit_mismatch` with amount 0 for a human; the system never claims across units automatically.
+* Unit conversion: a pack-unit line (e.g. `2 CS`, pack `4/5 LB`) is restated in the contract unit **only** when the printed pack text is exactly `COUNT/SIZE UNIT` and `UNIT` equals the contract unit. The finding is marked confidence 0.7 (always routed to the review queue) and the evidence shows the conversion. Anything else (`6/#10`, unknown packs) stays a `unit_mismatch` with amount 0 for a human.
 * Contract prices defined by formula (`needs_index`) are never audited.
 * The success fee is **computed** (25 % of recovered) and stored; invoicing/payment collection is not built.
 * Not code, still required by the spec: DPA with customers, lawyer review of the contingency-fee clause, pilots, the 90-day plan.

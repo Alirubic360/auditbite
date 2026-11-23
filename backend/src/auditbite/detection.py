@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from decimal import Decimal
 from .money import D, D_or_none, cents
-from .units import norm_unit
+from .units import norm_unit, pack_factor
 
 MATH_TOL = Decimal("0.02")
 
@@ -82,6 +82,17 @@ def detect_price_variance(line: dict, item: dict) -> Finding | None:
                        f"(tolerance {item['tolerance_pct']}%), qty {D(line['qty'])}.",
                        line["line_no"], expected=allowed, billed=billed, source_clause=item.get("source_clause"))
     return None
+
+
+def convert_line(line: dict, item: dict) -> dict | None:
+    """Restate a pack-unit line (e.g. 2 CS @ 80, '4/5 LB') in the contract's unit (LB) ONLY when the printed pack text
+    unambiguously names the contract unit. Anything else returns None and stays a human-review mismatch."""
+    f = pack_factor(line.get("pack_description"), item.get("unit"))
+    if f is None or line.get("qty") is None or line.get("unit_price") is None:
+        return None
+    return {**line, "unit": item["unit"], "qty": D(line["qty"]) * f, "unit_price": D(line["unit_price"]) / f,
+            "converted_note": f"converted {line.get('unit')} ({line.get('pack_description')}) -> {item['unit']}, factor {f}, "
+                              f"printed {D(line['qty'])} x {D(line['unit_price'])}"}
 
 
 def detect_unit_mismatch(line: dict, item: dict) -> Finding | None:

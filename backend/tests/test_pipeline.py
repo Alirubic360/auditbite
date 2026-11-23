@@ -79,7 +79,7 @@ def test_ai_unsure_or_hallucinated_candidate_means_no_match_no_claim(conn, stora
 def test_unit_mismatch_and_substitution_are_flagged_never_priced(conn, storage, world):
     org, *_ = world
     item = conn.execute("select id from contract_items where sku='CHK-40' and org_id=%s", (org,)).fetchone()["id"]
-    ai = FakeAI({"u": inv(lines=[ln(1, "x", 2, "CS", 80, 160, sku="CHK-40", pack="4/10 LB"),
+    ai = FakeAI({"u": inv(lines=[ln(1, "x", 2, "CS", 80, 160, sku="CHK-40", pack="6/#10"),
                                  ln(2, "Chicken breast bnls skinless", 10, "LB", 9, 90)])},
                 matches={2: Match(str(item), "substitution", Dc("0.9"), "lower grade brand")})
     iid, _ = run(conn, storage, org, ai, "u")
@@ -181,3 +181,16 @@ def test_abbreviated_descriptions_below_0_4_are_not_sent_to_ai(conn, storage, wo
     conn.execute("update invoices set status='uploaded', attempts=0 where id=%s", (iid,)); conn.commit()
     pipeline.run_once(conn, storage, ai, ai, ai)
     assert conn.execute("select match_type from invoice_lines where invoice_id=%s", (iid,)).fetchone()["match_type"] == "equivalent"
+
+
+def test_case_to_pound_conversion_is_applied_only_when_pack_text_is_unambiguous(conn, storage, world):
+    org, *_ = world
+    ai = FakeAI({"c": inv(lines=[ln(1, "x", 2, "CS", 44.00, 88.00, sku="CHK-40", pack="4/5 LB"),     # 40 LB at 2.20/LB vs 2.00 -> 8.00
+                                 ln(2, "x", 2, "CS", 40.10, 80.20, sku="CHK-40", pack="4/5 LB"),     # 2.005/LB: within 0.5% tolerance
+                                 ln(3, "x", 2, "CS", 80.00, 160.0, sku="CHK-40", pack="6/#10")],      # not a weight: cannot convert
+                          sub=328.2, tax=0, total=328.2)})
+    iid, _ = run(conn, storage, org, ai, "c")
+    d = discs(conn, iid)
+    pv = [x for x in d if x["type"] == "price_variance"]
+    assert len(pv) == 1 and pv[0]["amount"] == Dc("8.00") and "converted CS (4/5 LB) -> LB" in pv[0]["evidence"] and pv[0]["confidence"] < Dc("0.8")
+    assert [x["type"] for x in d if x["type"] == "unit_mismatch"] == ["unit_mismatch"]       # only line 3 stays a human mismatch
