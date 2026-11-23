@@ -445,4 +445,60 @@ def create_app(deps: Deps) -> FastAPI:
                     rejected += 1
         return {"accepted": accepted, "rejected": rejected}
 
+    # ---- platform admin (Persian-language console; operator-only, cross-tenant by design) ----
+    def admin_user(user=Depends(uid)) -> str:
+        with service_tx() as c:
+            if not c.execute("select 1 from platform_admins where user_id=%s", (user,)).fetchone():
+                raise HTTPException(403, "platform admin only")
+        return user
+
+    @app.get("/admin/overview")
+    def admin_overview(_=Depends(admin_user)):
+        with service_tx() as c:
+            return {
+                "orgs": c.execute("select count(*) n from organizations").fetchone()["n"],
+                "users": c.execute("select count(distinct user_id) n from org_members").fetchone()["n"],
+                "invoices_by_status": c.execute("select status, count(*) n from invoices group by 1 order by 1").fetchall(),
+                "queue_depth": c.execute("select count(*) n from invoices where status in ('uploaded','extracting')").fetchone()["n"],
+                "failed": c.execute("select count(*) n from invoices where status='failed'").fetchone()["n"],
+                "claimed": c.execute("select coalesce(sum(total_claimed),0) v from claims where status<>'draft'").fetchone()["v"],
+                "recovered": c.execute("select coalesce(sum(recovered_amount),0) v from claims").fetchone()["v"],
+                "fees": c.execute("select coalesce(sum(fee_amount),0) v from claims").fetchone()["v"],
+            }
+
+    @app.get("/admin/orgs")
+    def admin_orgs(_=Depends(admin_user)):
+        with service_tx() as c:
+            return c.execute("""select o.id, o.name, o.success_fee_rate, o.created_at,
+                (select count(*) from org_members m where m.org_id=o.id) as members,
+                (select count(*) from invoices i where i.org_id=o.id) as invoices,
+                (select count(*) from invoices i where i.org_id=o.id and i.status='failed') as failed,
+                (select coalesce(sum(total_claimed),0) from claims c where c.org_id=o.id and c.status<>'draft') as claimed,
+                (select coalesce(sum(recovered_amount),0) from claims c where c.org_id=o.id) as recovered,
+                (select coalesce(sum(fee_amount),0) from claims c where c.org_id=o.id) as fees
+                from organizations o order by o.created_at desc""").fetchall()
+
+    @app.patch("/admin/orgs/{id}")
+    def admin_set_fee(id: uuid.UUID, b: SettingsIn, admin=Depends(admin_user)):
+        if b.success_fee_rate is None:
+            raise HTTPException(422, "success_fee_rate required")
+        with service_tx() as c:
+            r = one(c, "update organizations set success_fee_rate=%s where id=%s returning id, name, success_fee_rate", (b.success_fee_rate, id), "organization")
+            c.execute("insert into audit_log (org_id,user_id,action,entity,entity_id,detail) values (%s,%s,'admin.set_fee','organization',%s,%s)",
+                      (id, admin, id, J({"rate": str(b.success_fee_rate)})))
+            return r
+
+    @app.get("/admin/failed-invoices")
+    def admin_failed(_=Depends(admin_user)):
+        with service_tx() as c:
+            return c.execute("""select i.id, i.org_id, o.name as org_name, i.original_filename, i.error, i.attempts, i.created_at
+                                from invoices i join organizations o on o.id=i.org_id where i.status='failed' order by i.created_at desc limit 200""").fetchall()
+
+    @app.post("/admin/invoices/{id}/requeue")
+    def admin_requeue(id: uuid.UUID, admin=Depends(admin_user)):
+        with service_tx() as c:
+            r = one(c, "update invoices set status='uploaded', attempts=0, error=null where id=%s and status='failed' returning id, org_id", (id,), "failed invoice")
+            c.execute("insert into audit_log (org_id,user_id,action,entity,entity_id) values (%s,%s,'admin.requeue','invoice',%s)", (r["org_id"], admin, id))
+            return {"status": "uploaded"}
+
     return app

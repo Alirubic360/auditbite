@@ -10,12 +10,13 @@ Core rules from the spec, as enforced in code:
 
 ## Layout
 ```
+db/migrations/0002_platform_admin.sql  platform_admins table (operator access)
 db/migrations/0001_schema.sql   tables, composite tenant FKs, RLS, find_duplicate_invoices()
 db/test/auth_shim.sql           local stand-in for Supabase auth.uid()/roles (tests only)
 backend/src/auditbite/          money, detection, matching, extraction, ai, pipeline, claims, contracts, metrics, evaluation, api, worker
-backend/tests/                  60 tests (unit, real-Postgres RLS, pipeline, claims, API, adapters, eval maths)
-frontend/                       Next.js 15 + TypeScript + Tailwind: dashboard, invoices(+[id]), review, contracts, claims(+[id]), settings
-e2e/run.js                      Playwright run against the live stack (25 checks)
+backend/tests/                  62 tests (unit, real-Postgres RLS, pipeline, claims, API, adapters, eval maths)
+frontend/                       Next.js 15 + TypeScript + Tailwind: customer app (English only): dashboard, invoices(+[id]), review, contracts, claims(+[id]), settings; `/admin` = Persian RTL platform-admin console
+e2e/run.js                      Playwright run against the live stack (29 checks)
 ```
 
 ## Run locally
@@ -33,6 +34,12 @@ cd ../frontend && cp .env.example .env.local && npm install && npm run build && 
 ```
 Quality eval before each customer / prompt change: `python -m auditbite.evaluation labelled.json --price-in X --price-out Y`
 (format in `evaluation.py`; prices are arguments on purpose — check Anthropic's current pricing).
+
+## Languages
+* **Customer app: English (Latin) only.** No language switch, LTR.
+* **Platform-admin console (`/admin`): Persian, RTL.** Operator-only: all orgs, queue depth, failed invoices (retry), per-org success-fee rate. Grant access with
+  `insert into platform_admins (user_id) values ('<auth user id>');` — tenant users get 403 and cannot read the table.
+* Claim letters to vendors are English by default.
 
 ## Where this deviates from the PDF (and why)
 | Spec | Built | Reason |

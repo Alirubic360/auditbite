@@ -80,8 +80,9 @@ const uuid = () => crypto.randomUUID();
   // 8. dark mode, RTL/fa, mobile
   const p2 = await browser.newPage({ colorScheme: 'dark', viewport: { width: 1280, height: 800 } });
   await p2.addInitScript((t) => { localStorage.setItem('ab_dev_jwt', t); localStorage.setItem('ab_lang', 'fa'); }, await page.evaluate(() => localStorage.getItem('ab_dev_jwt')));
-  await p2.goto('http://localhost:3000/dashboard'); await p2.waitForSelector('text=داشبورد');
-  check('RTL applied for fa', (await p2.evaluate(() => document.documentElement.dir)) === 'rtl'); await p2.screenshot({ path: `${OUT}/dashboard-dark-rtl.png` });
+  await p2.goto('http://localhost:3000/dashboard'); await p2.waitForSelector('text=Top 5 vendors');
+  check('customer app stays English/LTR even if a stale fa preference exists', (await p2.evaluate(() => getComputedStyle(document.documentElement).direction)) === 'ltr' && (await p2.evaluate(() => document.documentElement.lang)) === 'en' && !(await p2.locator('select#lang').count()));
+  check('customer app contains no Persian text', !/[\u0600-\u06FF]/.test(await p2.locator('body').innerText())); await p2.screenshot({ path: `${OUT}/dashboard-dark.png` });
   const bg = await p2.evaluate(() => getComputedStyle(document.body).backgroundColor); check('dark mode background is dark', bg !== 'rgb(248, 250, 252)', bg);
   const mob = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 }); await mob.addInitScript((t) => localStorage.setItem('ab_dev_jwt', t), await page.evaluate(() => localStorage.getItem('ab_dev_jwt')));
   const mp = await mob.newPage(); await mp.goto('http://localhost:3000/invoices'); await mp.waitForSelector('text=E2E-1001');
@@ -94,6 +95,16 @@ const uuid = () => crypto.randomUUID();
   await q.fill('input', 'Rival Group'); await q.click('text=Create workspace'); await q.waitForURL('**/settings');
   await q.goto('http://localhost:3000/invoices'); await q.waitForSelector('text=Nothing here yet'); check('org B sees no invoices from org A', true);
   await q.goto(`http://localhost:3000/invoices/${invId}`); await q.waitForSelector('text=invoice not found'); check("org B opening org A's invoice URL gets an error, not data", !(await q.locator('body').innerText()).includes('E2E-1001'));
+
+  // 10. platform-admin console: Persian + RTL, admin-only
+  const adminUser = uuid(); require('child_process').execSync(`psql -h /tmp -p 54329 -U postgres -d ab_e2e -q -c "insert into platform_admins (user_id) values ('${adminUser}')"`);
+  const actx = await mk(adminUser); const ap = await actx.newPage(); await ap.goto('http://localhost:3000/admin'); await ap.waitForSelector('text=پنل مدیریت پلتفرم');
+  await ap.waitForSelector('td:has-text("Acme Restaurant Group")');
+  check('admin console is Persian and RTL', (await ap.locator('[dir=rtl]').first().getAttribute('lang')) === 'fa' && /[\u0600-\u06FF]/.test(await ap.locator('h1').innerText()));
+  check('admin sees all orgs (Acme and Rival)', (await ap.locator('td:has-text("Rival Group")').count()) >= 1);
+  await ap.screenshot({ path: `${OUT}/admin-fa.png` });
+  const np = await (await mk(uuid())).newPage(); await np.goto('http://localhost:3000/admin'); await np.waitForSelector('text=شما دسترسی مدیر پلتفرم ندارید');
+  check('non-admin user is refused in the admin console', true);
 
   check('no browser console/page errors', errors.length === 0, errors.slice(0, 3).join(' || '));
   await browser.close();
