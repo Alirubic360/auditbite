@@ -70,3 +70,15 @@ def test_resend_request_shape_and_errors():
     bad = ResendSender("k", "a@x.com", httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(422, json={}))))
     with pytest.raises(httpx.HTTPStatusError):
         bad.send("v@x.com", "s", "b")
+
+
+def test_worker_without_ai_key_leaves_invoices_queued_but_still_runs_followups(dburl, storage):
+    import psycopg
+    from psycopg.rows import dict_row
+    from auditbite import worker
+    from auditbite.mailer import OutboxSender
+    from seed import make_org, upload
+    with psycopg.connect(dburl, row_factory=dict_row) as c:
+        org, _ = make_org(c); iid = upload(c, storage, org, "x"); c.commit()
+        assert worker.tick(c, storage, None, OutboxSender()) == {"processed": 0, "followups": 0}
+        assert c.execute("select status, attempts from invoices where id=%s", (iid,)).fetchone() == {"status": "uploaded", "attempts": 0}
