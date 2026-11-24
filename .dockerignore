@@ -1,0 +1,13 @@
+.git
+frontend
+e2e
+db
+scripts
+.github
+**/tests
+**/__pycache__
+**/.pytest_cache
+**/*.egg-info
+**/storage
+**/.env
+**/node_modules

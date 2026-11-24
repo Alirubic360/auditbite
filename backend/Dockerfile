@@ -4,8 +4,9 @@ ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 RUN apt-get update && apt-get install -y --no-install-recommends libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0 fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY pyproject.toml ./
-COPY src ./src
+# Build context is the REPO ROOT (Fly.io and `docker build -f backend/Dockerfile .`)
+COPY backend/pyproject.toml ./
+COPY backend/src ./src
 RUN pip install .
 RUN useradd -m app && chown -R app /app
 USER app

@@ -1,4 +1,4 @@
-# Fly.io: API + worker from backend/Dockerfile.  Deploy with:  fly deploy --config fly.toml --dockerfile backend/Dockerfile --build-target ''
+# Fly.io: API + worker from backend/Dockerfile (build context = repo root).  Deploy with:  fly deploy
 app = "auditbite-api"          # change to a unique name
 primary_region = "iad"
 
