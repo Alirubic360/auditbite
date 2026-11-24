@@ -4,7 +4,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { signOut } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 
-const NAV = [["dashboard", "/dashboard"], ["invoices", "/invoices"], ["review", "/review"], ["contracts", "/contracts"], ["claims", "/claims"], ["settings", "/settings"]];
+const NAV = [["dashboard", "/dashboard"], ["invoices", "/invoices"], ["review", "/review"], ["contracts", "/contracts"], ["claims", "/claims"], ["billing", "/billing"], ["settings", "/settings"]];
 export default function Shell({ children }: { children: React.ReactNode }) {
   const path = usePathname(); const router = useRouter(); const { t } = useI18n();
   return (

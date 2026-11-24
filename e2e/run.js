@@ -106,6 +106,36 @@ const uuid = () => crypto.randomUUID();
   const np = await (await mk(uuid())).newPage(); await np.goto('http://localhost:3000/admin'); await np.waitForSelector('text=شما دسترسی مدیر پلتفرم ندارید');
   check('non-admin user is refused in the admin console', true);
 
+  // 11. crypto billing: monthly invoice (admin generates) -> customer pays via checkout -> webhook -> Paid
+  const psql = (q) => require('child_process').execSync(`psql -h /tmp -p 54329 -U postgres -d ${process.env.E2E_DB || 'ab_e2e'} -q -At -c "${q}"`).toString().trim();
+  psql("update organizations set created_at = date_trunc('month', now()) - interval '1 month' + interval '2 days' where name='Acme Restaurant Group'");
+  psql("update claims set recovered_at = date_trunc('month', now()) - interval '1 month' + interval '3 days' where org_id=(select id from organizations where name='Acme Restaurant Group')");
+  await ap.goto('http://localhost:3000/admin'); await ap.waitForSelector('text=صورتحساب‌های کریپتو'); await ap.click('text=ساخت صورتحساب‌های ماه'); await ap.waitForSelector('text=صورتحساب جدید ساخته شد');
+  await ap.waitForSelector('tr:has-text("Acme Restaurant Group"):has-text("باز")'); check('admin generated the monthly invoice (Persian console shows it as open)', true);
+  const jwtA = await page.evaluate(() => localStorage.getItem('ab_dev_jwt'));
+  await page.goto('http://localhost:3000/billing'); await page.waitForSelector('[data-testid=billing-row]');
+  const row = await page.locator('[data-testid=billing-row]').first().innerText();
+  check('customer sees the invoice: $5.00 success fee, no subscription in first month', row.includes('$5.00') && row.includes('$0.00') && row.includes('open'), row.replace(/\s+/g, ' ').slice(0, 90));
+  await page.screenshot({ path: `${OUT}/billing.png` });
+  await page.click('text=Pay with crypto'); await page.waitForURL('**/__btcpay/checkout/**');
+  check('redirected to the gateway checkout for exactly $5.00 USD', (await page.locator('#amt').innerText()) === '5.00 USD');
+  const pid = page.url().split('/').pop();
+  const bad = await ctx.request.post('http://localhost:8000/webhooks/btcpay', { data: { deliveryId: 'forged', invoiceId: pid, type: 'InvoiceSettled' }, headers: { 'BTCPay-Sig': 'sha256=deadbeef' } });
+  check('forged webhook rejected (401)', bad.status() === 401);
+  const wrong = await (await ctx.request.post(`http://localhost:8000/__btcpay/settle/${pid}?amount=4.00`)).json();
+  await page.goto('http://localhost:3000/billing'); await page.waitForSelector('[data-testid=billing-row]');
+  check('settled-but-WRONG-amount payment is NOT marked paid', wrong.body.outcome === 'mismatch_ignored' && (await page.locator('[data-testid=billing-row]').first().innerText()).includes('open'), JSON.stringify(wrong.body));
+  psql("update billing_invoices set checkout_expires_at = now() - interval '1 minute'");   // let the customer start a fresh checkout
+  await page.click('text=Pay with crypto'); await page.waitForURL('**/__btcpay/checkout/**'); const pid2 = page.url().split('/').pop();
+  check('a new checkout was created after the first one expired', pid2 !== pid);
+  const ok = await (await ctx.request.post(`http://localhost:8000/__btcpay/settle/${pid2}`)).json();
+  check('correct payment confirmed by the server re-checking the gateway', ok.webhook_status === 200 && ok.body.outcome === 'paid', JSON.stringify(ok.body));
+  await page.goto('http://localhost:3000/billing'); await page.waitForSelector('[data-testid=billing-row] >> text=paid');
+  check('customer page shows Paid and no pay button', (await page.locator('text=Pay with crypto').count()) === 0);
+  await ap.goto('http://localhost:3000/admin'); await ap.waitForSelector('text=رویدادهای پرداخت نیازمند بررسی'); await ap.waitForSelector('b:has-text("amount_or_order_mismatch")');
+  check('admin console flags the mismatched payment for review', true); await ap.screenshot({ path: `${OUT}/admin-billing-fa.png` });
+  await q.goto('http://localhost:3000/billing'); await q.waitForSelector('text=No invoices yet'); check("org B sees none of org A's billing invoices", true);
+
   check('no browser console/page errors', errors.length === 0, errors.slice(0, 3).join(' || '));
   await browser.close();
   const failed = results.filter((r) => !r[1]); console.log(`\n${results.length - failed.length}/${results.length} checks passed`); process.exit(failed.length ? 1 : 0);

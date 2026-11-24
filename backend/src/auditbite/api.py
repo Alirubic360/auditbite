@@ -4,11 +4,12 @@ from decimal import Decimal
 from typing import Any
 import jwt
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.encoders import ENCODERS_BY_TYPE
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
-from . import claims as claims_mod, contracts as contracts_mod, metrics
+from . import billing, claims as claims_mod, contracts as contracts_mod, metrics, payments
 from .db import J, service_tx, user_tx
 from .money import D, cents
 from .storage import MAX_BYTES, sha256, sniff_media_type
@@ -32,8 +33,8 @@ class JSON(JSONResponse):
 
 class Deps:
     """Injectable collaborators so tests (and local demos) never need real AI/email."""
-    def __init__(self, storage, ai=None, sender=None):
-        self.storage, self.ai, self.sender = storage, ai, sender
+    def __init__(self, storage, ai=None, sender=None, payments=None):
+        self.storage, self.ai, self.sender, self.payments = storage, ai, sender, payments
 
 
 # ---- request models ----
@@ -77,6 +78,10 @@ class InboundIn(BaseModel):
 class SettingsIn(BaseModel):
     name: str | None = None; success_fee_rate: Decimal | None = Field(default=None, ge=0, le=1)
     default_tolerance_pct: Decimal | None = Field(default=None, ge=0, le=100)
+    subscription_per_location_usd: Decimal | None = Field(default=None, ge=0)
+
+class MarkPaidIn(BaseModel):
+    reason: str = Field(min_length=3)
 
 
 _JWKS: dict = {}
@@ -493,7 +498,7 @@ def create_app(deps: Deps) -> FastAPI:
     @app.get("/admin/orgs")
     def admin_orgs(_=Depends(admin_user)):
         with service_tx() as c:
-            return c.execute("""select o.id, o.name, o.success_fee_rate, o.created_at,
+            return c.execute("""select o.id, o.name, o.success_fee_rate, o.subscription_per_location_usd, o.created_at,
                 (select count(*) from org_members m where m.org_id=o.id) as members,
                 (select count(*) from invoices i where i.org_id=o.id) as invoices,
                 (select count(*) from invoices i where i.org_id=o.id and i.status='failed') as failed,
@@ -504,12 +509,13 @@ def create_app(deps: Deps) -> FastAPI:
 
     @app.patch("/admin/orgs/{id}")
     def admin_set_fee(id: uuid.UUID, b: SettingsIn, admin=Depends(admin_user)):
-        if b.success_fee_rate is None:
-            raise HTTPException(422, "success_fee_rate required")
+        if b.success_fee_rate is None and b.subscription_per_location_usd is None:
+            raise HTTPException(422, "success_fee_rate or subscription_per_location_usd required")
         with service_tx() as c:
-            r = one(c, "update organizations set success_fee_rate=%s where id=%s returning id, name, success_fee_rate", (b.success_fee_rate, id), "organization")
+            r = one(c, """update organizations set success_fee_rate=coalesce(%s, success_fee_rate), subscription_per_location_usd=coalesce(%s, subscription_per_location_usd)
+                          where id=%s returning id, name, success_fee_rate, subscription_per_location_usd""", (b.success_fee_rate, b.subscription_per_location_usd, id), "organization")
             c.execute("insert into audit_log (org_id,user_id,action,entity,entity_id,detail) values (%s,%s,'admin.set_fee','organization',%s,%s)",
-                      (id, admin, id, J({"rate": str(b.success_fee_rate)})))
+                      (id, admin, id, J({"rate": str(b.success_fee_rate), "subscription": str(b.subscription_per_location_usd)})))
             return r
 
     @app.get("/admin/failed-invoices")
@@ -524,5 +530,77 @@ def create_app(deps: Deps) -> FastAPI:
             r = one(c, "update invoices set status='uploaded', attempts=0, error=null where id=%s and status='failed' returning id, org_id", (id,), "failed invoice")
             c.execute("insert into audit_log (org_id,user_id,action,entity,entity_id) values (%s,%s,'admin.requeue','invoice',%s)", (r["org_id"], admin, id))
             return {"status": "uploaded"}
+
+    # ---- billing (customer): crypto checkout for monthly invoices ----
+    @app.get("/billing")
+    def my_billing(user=Depends(uid)):
+        with user_tx(user) as c:
+            org = org_of(c)
+            return {"invoices": c.execute("""select id, period_start, period_end, location_count, subscription_amount, recovered_base, success_fee_amount, total_usd,
+                                             status, checkout_url, checkout_expires_at, due_at, paid_at from billing_invoices order by period_start desc""").fetchall(),
+                    "rates": c.execute("select success_fee_rate, subscription_per_location_usd from organizations where id=%s", (org,)).fetchone(),
+                    "payments_enabled": deps.payments is not None}
+
+    @app.post("/billing/invoices/{id}/checkout")
+    def checkout(id: uuid.UUID, user=Depends(uid)):
+        if deps.payments is None:
+            raise HTTPException(503, "crypto payments are not configured")
+        with user_tx(user) as c:
+            org = org_of(c)
+            one(c, "select 1 from billing_invoices where id=%s", (id,), "billing invoice")       # RLS ownership check
+        base = os.environ.get("APP_BASE_URL", "http://localhost:3000").rstrip("/")
+        with service_tx() as c:
+            try:
+                b = billing.create_checkout(c, deps.payments, org, id, f"{base}/billing")
+            except billing.BillingError as e:
+                raise HTTPException(409, str(e)) from None
+            except Exception as e:  # noqa: BLE001 - provider down/misconfigured
+                raise HTTPException(502, f"payment provider error: {e.__class__.__name__}") from None
+        return {"checkout_url": b["checkout_url"], "status": b["status"], "expires_at": b["checkout_expires_at"]}
+
+    @app.post("/webhooks/btcpay")
+    async def btcpay_webhook(request: Request):
+        if deps.payments is None or deps.payments.name != "btcpay":
+            raise HTTPException(404, "not configured")
+        body = await request.body()
+        try:
+            ev = deps.payments.verify_webhook(dict(request.headers), body)
+        except payments.InvalidSignature:
+            raise HTTPException(401, "bad signature") from None
+
+        def work():                                   # blocking DB + provider HTTP: keep it off the event loop
+            with service_tx() as c:
+                return billing.apply_provider_state(c, deps.payments, ev.provider_invoice_id, ev.delivery_id, ev.event_type, json.loads(body))
+        try:
+            return {"outcome": await run_in_threadpool(work)}
+        except Exception as e:  # noqa: BLE001 - let the provider retry later
+            raise HTTPException(502, f"could not verify with provider: {e.__class__.__name__}") from None
+
+    # ---- billing (platform admin) ----
+    @app.get("/admin/billing")
+    def admin_billing(status: str | None = None, _=Depends(admin_user)):
+        with service_tx() as c:
+            return {"invoices": c.execute("""select b.*, o.name as org_name, (b.status <> 'paid' and b.status <> 'void' and b.due_at < now()) as overdue
+                                             from billing_invoices b join organizations o on o.id=b.org_id where (%s::text is null or b.status=%s)
+                                             order by b.created_at desc limit 300""", (status, status)).fetchall(),
+                    "flagged_events": c.execute("""select e.id, e.created_at, e.provider, e.provider_invoice_id, e.billing_invoice_id, e.note, e.observed_status, o.name as org_name
+                                                   from payment_events e left join organizations o on o.id=e.org_id
+                                                   where e.note in ('amount_or_order_mismatch','duplicate_payment','overpaid','paid_late','paid_partial','unknown_invoice','marked_by_merchant')
+                                                   order by e.created_at desc limit 100""").fetchall()}
+
+    @app.post("/admin/billing/generate")
+    def admin_generate(admin=Depends(admin_user)):
+        with service_tx() as c:
+            return {"created": billing.generate_due_invoices(c)}
+
+    @app.post("/admin/billing/{id}/mark-paid")
+    def admin_mark_paid(id: uuid.UUID, b: MarkPaidIn, admin=Depends(admin_user)):
+        with service_tx() as c:
+            try:
+                r = billing.mark_paid_manually(c, id, admin, b.reason)
+            except billing.BillingError as e:
+                raise HTTPException(409, str(e)) from None
+            c.execute("insert into audit_log (org_id,user_id,action,entity,entity_id,detail) values (%s,%s,'admin.mark_paid','billing_invoice',%s,%s)", (r["org_id"], admin, id, J({"reason": b.reason})))
+            return r
 
     return app

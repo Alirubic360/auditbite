@@ -3,7 +3,7 @@
 import { ReactNode } from "react";
 
 const en: Record<string, string> = {
-  dashboard: "Dashboard", invoices: "Invoices", review: "Review", contracts: "Contracts", claims: "Claims", settings: "Settings",
+  dashboard: "Dashboard", invoices: "Invoices", review: "Review", contracts: "Contracts", claims: "Claims", billing: "Billing", settings: "Settings",
   signout: "Sign out", recovered: "Recovered cash", found: "Discrepancies found", audited: "Invoices audited", spend: "Total spend audited",
   success: "Success rate (recovered / claimed)", topVendors: "Top 5 vendors by overcharge", monthly: "Recovery by month",
   approve: "Approve", reject: "Reject", upload: "Upload invoices", drop: "Drop PDF, JPG or PNG invoices here or click to browse", empty: "Nothing here yet",

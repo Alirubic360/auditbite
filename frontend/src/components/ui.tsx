@@ -27,7 +27,7 @@ const BADGE: Record<string, string> = {
   uploaded: "bg-slate-200 text-slate-800", extracting: "bg-blue-100 text-blue-800 animate-pulse", needs_review: "bg-amber-100 text-amber-800",
   audited: "bg-emerald-100 text-emerald-800", claimed: "bg-indigo-100 text-indigo-800", recovered: "bg-emerald-200 text-emerald-900", failed: "bg-red-100 text-red-800",
   draft: "bg-slate-200 text-slate-800", sent: "bg-blue-100 text-blue-800", disputed: "bg-amber-100 text-amber-800", credited: "bg-emerald-100 text-emerald-800",
-  paid: "bg-emerald-200 text-emerald-900", written_off: "bg-slate-300 text-slate-700", pending: "bg-amber-100 text-amber-800", approved: "bg-emerald-100 text-emerald-800", rejected: "bg-slate-200 text-slate-700",
+  paid: "bg-emerald-200 text-emerald-900", written_off: "bg-slate-300 text-slate-700", pending: "bg-amber-100 text-amber-800", approved: "bg-emerald-100 text-emerald-800", rejected: "bg-slate-200 text-slate-700", open: "bg-amber-100 text-amber-800", processing: "bg-blue-100 text-blue-800 animate-pulse", void: "bg-slate-300 text-slate-700",
 };
 export const Badge = ({ s }: { s: string }) => <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${BADGE[s] || "bg-slate-200"}`}>{s.replace("_", " ")}</span>;
 

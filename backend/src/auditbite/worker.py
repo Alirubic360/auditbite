@@ -1,7 +1,7 @@
 """Worker: drains the invoice queue and sends due follow-ups. `python -m auditbite.worker`."""
 from __future__ import annotations
 import os, time
-from . import claims, pipeline
+from . import billing, claims, pipeline
 from .ai import AnthropicAI
 from .db import service_conn
 from .mailer import OutboxSender, ResendSender
@@ -22,7 +22,7 @@ def build_deps():
 
 
 def tick(conn, storage, ai, sender) -> dict:
-    done = {"processed": 0, "followups": 0}
+    done = {"processed": 0, "followups": 0, "billing_invoices": 0}
     while True:
         if ai is None:
             break   # no AI configured: leave invoices queued instead of failing them
@@ -30,6 +30,7 @@ def tick(conn, storage, ai, sender) -> dict:
             break
         done["processed"] += 1
     done["followups"] = claims.run_followups(conn, sender)
+    done["billing_invoices"] = billing.generate_due_invoices(conn)
     conn.commit()
     return done
 

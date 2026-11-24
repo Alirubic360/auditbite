@@ -7,6 +7,7 @@ from auditbite import pipeline
 from auditbite.api import Deps, create_app
 from auditbite.db import service_conn
 from auditbite.mailer import OutboxSender
+from auditbite.payments import BTCPayProvider
 from auditbite.storage import LocalStorage
 from fakes import FakeAI, inv, ln
 
@@ -30,7 +31,44 @@ def worker():
 
 
 threading.Thread(target=worker, daemon=True).start()
-app = create_app(Deps(storage, ai, sender))
+import hashlib, hmac, json as _json
+import httpx
+from fastapi import Request
+from fastapi.responses import HTMLResponse
+WH = "e2e-hook"
+_fake = {}   # in-process stand-in for a BTCPay Server (the REAL BTCPayProvider talks to it over real HTTP)
+provider = BTCPayProvider("http://127.0.0.1:8000/__btcpay", "STORE", "e2e-key", WH)
+app = create_app(Deps(storage, ai, sender, provider))
+
+
+@app.post("/__btcpay/api/v1/stores/{store}/invoices")
+async def fake_create(store: str, request: Request):
+    if request.headers.get("authorization") != "token e2e-key":
+        return HTMLResponse("unauthorized", 401)
+    b = await request.json(); pid = f"BT{len(_fake) + 1}"
+    _fake[pid] = {"id": pid, "status": "New", "additionalStatus": "None", "amount": b["amount"], "currency": b["currency"], "metadata": b["metadata"], "redirect": b["checkout"]["redirectURL"]}
+    return {"id": pid, "checkoutLink": f"http://localhost:8000/__btcpay/checkout/{pid}", "expirationTime": time.time() + 3600}
+
+
+@app.get("/__btcpay/api/v1/stores/{store}/invoices/{pid}")
+def fake_get(store: str, pid: str):
+    return {k: v for k, v in _fake[pid].items() if k != "redirect"}
+
+
+@app.get("/__btcpay/checkout/{pid}", response_class=HTMLResponse)
+def fake_checkout(pid: str):
+    i = _fake[pid]
+    return f"<html><body><h1>Fake BTCPay checkout</h1><p id=amt>{i['amount']} {i['currency']}</p><p id=st>{i['status']}</p></body></html>"
+
+
+@app.post("/__btcpay/settle/{pid}")
+def fake_settle(pid: str, amount: str | None = None):
+    """Test control: the customer 'paid'. Fires a correctly signed webhook like BTCPay would."""
+    _fake[pid]["status"] = "Settled"
+    if amount: _fake[pid]["amount"] = amount
+    body = _json.dumps({"deliveryId": f"del-{pid}-{time.time()}", "invoiceId": pid, "type": "InvoiceSettled"}).encode()
+    r = httpx.post("http://127.0.0.1:8000/webhooks/btcpay", content=body, headers={"BTCPay-Sig": "sha256=" + hmac.new(WH.encode(), body, hashlib.sha256).hexdigest(), "Content-Type": "application/json"})
+    return {"webhook_status": r.status_code, "body": r.json()}
 
 
 @app.get("/__outbox")

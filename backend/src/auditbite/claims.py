@@ -165,11 +165,14 @@ def record_credit(conn, org_id, claim_id, amount, status="credited") -> dict:
         raise ClaimError("claim not found")
     if claim["status"] == "draft":
         raise ClaimError("claim has not been sent")
+    if claim.get("billing_invoice_id"):
+        raise ClaimError("this recovery has already been billed; it can no longer be changed")
     if amount < 0 or amount > D(claim["total_claimed"]):
         raise ClaimError("recovered amount must be between 0 and the amount claimed")
     rate = D(conn.execute("select success_fee_rate from organizations where id=%s", (org_id,)).fetchone()["success_fee_rate"])
     fee = cents(amount * rate) if status in ("credited", "paid") else Decimal(0)
-    conn.execute("update claims set status=%s, recovered_amount=%s, fee_amount=%s where id=%s", (status, amount, fee, claim_id))
+    conn.execute("update claims set status=%s, recovered_amount=%s, fee_amount=%s, recovered_at=case when %s > 0 then coalesce(recovered_at, now()) else null end where id=%s",
+                 (status, amount, fee, fee, claim_id))
     if status in ("credited", "paid"):
         conn.execute("""update followups set status='cancelled' where claim_id=%s and status='scheduled'""", (claim_id,))
         conn.execute("""update invoices set status='recovered' where org_id=%s and id in

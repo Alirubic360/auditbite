@@ -80,7 +80,7 @@ def test_worker_without_ai_key_leaves_invoices_queued_but_still_runs_followups(d
     from seed import make_org, upload
     with psycopg.connect(dburl, row_factory=dict_row) as c:
         org, _ = make_org(c); iid = upload(c, storage, org, "x"); c.commit()
-        assert worker.tick(c, storage, None, OutboxSender()) == {"processed": 0, "followups": 0}
+        assert worker.tick(c, storage, None, OutboxSender()) == {"processed": 0, "followups": 0, "billing_invoices": 0}
         assert c.execute("select status, attempts from invoices where id=%s", (iid,)).fetchone() == {"status": "uploaded", "attempts": 0}
 
 
